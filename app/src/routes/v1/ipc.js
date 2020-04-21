@@ -1,38 +1,32 @@
-const router = require('express').Router();
-
-const Constants = require('../../components/constants');
+const config = require('config');
 const log = require('npmlog');
 const Problem = require('api-problem');
+const rateLimit = require('express-rate-limit');
+const router = require('express').Router();
+
+const keycloak = require('../../components/keycloak');
 const validation = require('../../middleware/validation');
+const dataService = require('../../services/dataService');
 
-const db = require('../../models');
+const ipcRateLimiter = rateLimit({
+  windowMs: config.get('server.rateLimit.ipc.windowMs'),
+  max: config.get('server.rateLimit.ipc.max')
+});
 
-router.post('/', validation.validateIPC, async (req, res) => {
-
+router.get('/', keycloak.protect(), async (_req, res) => {
   try {
-    const body = req.body;
-    const business = body.business;
-    const contacts = body.contacts;
-    const contact = contacts[0];
-    const ipcPlan = body.ipcPlan;
+    const result = await dataService.getBusinesses();
+    return res.status(200).json(result);
+  } catch (error) {
+    log.error(error);
+    return new Problem(500, { detail: error.message }).send(res);
+  }
+});
 
-    const biz = await db.Business.create(business);
-    log.debug('ipc', `created business id = ${biz.businessId}`);
-    contact.businessId = biz.businessId;
-    const kontakt = await db.Contact.create(contact);
-    log.debug('ipc', `created contact id = ${kontakt.contactId}`);
-    ipcPlan.businessId = biz.businessId;
-
-    // simple bizness logic...
-    if (ipcPlan.sleepingAreaType === Constants.SLEEPING_AREA_TYPE_SINGLE) {
-      ipcPlan.sharedSleepingPerRoom = 0;
-      ipcPlan.sharedSleepingDistancing = false;
-    }
-    const ipsee = await db.IPCPlan.create(ipcPlan);
-    log.debug('ipc', `created ipcPlan id = ${ipsee.ipcPlanId}`);
-
-
-    return res.sendStatus(201);
+router.post('/', ipcRateLimiter, validation.validateIPC, async (req, res) => {
+  try {
+    const result = await dataService.save(req.body.business, req.body.contacts, req.body.ipcPlan);
+    return res.status(201).json(result);
   } catch (error) {
     log.error(error);
     return new Problem(500, { detail: error.message }).send(res);
